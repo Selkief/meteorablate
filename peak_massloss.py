@@ -10,7 +10,11 @@ CACHE_FILE = ROOT/ "simulation_cache.pkl"
 
 VELOCITIES_KM_S = np.arange(11.0, 72.0, 1)
 ENTRY_ELEVATION_ANGLES_DEG = np.array([70.0, 45.0, 20.0], dtype=np.float64)
-#ENTRY_ELEVATION_ANGLES_DEG = np.array([45.0], dtype=np.float64)
+DENSITY_SCALES = np.array([0.8, 1.0, 1.2], dtype=np.float64)
+
+density_styles = {0.8: "o", 1.0: "^", 1.2: "s"}
+velocity_colours = {70.0: "tab:red", 45.0: "tab:blue", 20.0:"tab:green"}
+
 
 
 def load_cache():
@@ -28,46 +32,48 @@ def sweep_velocities():
     cache = load_cache()
     cache_used = False
     results = []
-    for entry_elevation_angle_deg in ENTRY_ELEVATION_ANGLES_DEG:
-        for velocity_km_s in VELOCITIES_KM_S:
-            #1.0 stands for the density scale, constant for now
-            key = (velocity_km_s, 1.0, entry_elevation_angle_deg)
-            if key not in cache:
-                if not cache_used:
-                    print(f"simulating {key}")
-                    cache_used = True
+    for density_scale in DENSITY_SCALES:
+        for entry_elevation_angle_deg in ENTRY_ELEVATION_ANGLES_DEG:
+            for velocity_km_s in VELOCITIES_KM_S:
 
-                cache[key] = cabmod.simulate_case(
-                    velocity_km_s,
-                    density_scale=1.0,
-                    entry_elevation_angle_deg=entry_elevation_angle_deg,
+                key = (velocity_km_s, density_scale, entry_elevation_angle_deg)
+                if key not in cache:
+                    if not cache_used:
+                        print(f"simulating {key}")
+                        cache_used = True
+
+                    cache[key] = cabmod.simulate_case(
+                        velocity_km_s,
+                        density_scale=density_scale,
+                        entry_elevation_angle_deg=entry_elevation_angle_deg,
+                    )
+                    with open(CACHE_FILE, "wb") as f:
+                        pickle.dump(cache, f)
+
+                else:
+                    if not cache_used:
+                        print(f"Using cached results")
+                        cache_used = True
+
+                results.append(
+                    {
+                        "density_scale": density_scale,
+                        "entry_elevation_angle_deg": entry_elevation_angle_deg,
+                        "velocity_km_s0": velocity_km_s,
+                        "data": cache[key],
+                    }
                 )
-                with open(CACHE_FILE, "wb") as f:
-                    pickle.dump(cache, f)
-
-            else:
-                if not cache_used:
-                    print(f"Using cached results")
-                    cache_used = True
-
-            results.append(
-                {
-                    "entry_elevation_angle_deg": entry_elevation_angle_deg,
-                    "velocity_km_s0": velocity_km_s,
-                    "data": cache[key],
-                }
-            )
     return results
 
 def get_h0(results_list):
-    #compute altitude of peak mass loss for each velocity and angle
-    #plot said altitude vs velocity for all angles
-    data_by_angle = {
-        angle: {"velocity": [], "h0": []}
-        for angle in ENTRY_ELEVATION_ANGLES_DEG
-    }
+    #compute altitude of peak mass loss for each velocity and angle and for scaled neutral densities
+    #plot said altitude vs velocity for all angles and different neutral densities
+    #different angles will get different colours and different neutral densities different marker styles 
+    #TO DO: add (non-confusing simple) legend!!
+    
     for item in results_list:
         angle = item["entry_elevation_angle_deg"]
+        density = item["density_scale"]
         altitude = item["data"]["altitude_km"]
         mass_loss_rate = item["data"]["mass_loss_rate_kg_s"]
 
@@ -75,15 +81,16 @@ def get_h0(results_list):
         #peak_massloss = mass_loss_rate[peak_massloss_index]
         h0 = altitude[peak_massloss_index]
 
-        data_by_angle[angle]["velocity"].append(item["velocity_km_s0"])
-        data_by_angle[angle]["h0"].append(h0)
+        if density == 1.0:
+            facecolour = velocity_colours[angle]
+        else:
+            facecolour = "none"
 
-    for angle, data in data_by_angle.items():
-        plt.scatter(data["velocity"], data["h0"], label=f"{angle}deg")
+        plt.scatter(item["velocity_km_s0"], h0, marker=density_styles[density], fc = facecolour, edgecolors= velocity_colours[angle])
     plt.xlabel("velocity [km/s]")
     plt.ylabel("Altitude [km]")
     plt.grid()
-    plt.legend(title="entry angle")
+    #plt.legend(title="entry angle")
     plt.savefig(FIG_DIR / "peak_massloss_hist2.png")
     plt.close()
 
