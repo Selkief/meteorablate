@@ -1,0 +1,8 @@
+# Versions used for the archived reproduction. Python 3.13.1 was used.
+# Install the pinned ablate checkout separately, as described in README.md.
+numpy==2.1.3
+scipy==1.17.1
+matplotlib==3.10.0
+h5py==3.14.0
+pymsis==0.11.0
+xarray==2026.4.0

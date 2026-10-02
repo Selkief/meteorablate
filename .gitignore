@@ -1,3 +1,10 @@
 __pycache__/
 *.py[cod]
 figures/
+!reproduction/figures/
+!reproduction/figures/**
+!reproduction_extended/figures/
+!reproduction_extended/figures/**
+paper/
+*.log
+qa/
