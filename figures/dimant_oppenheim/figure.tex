@@ -1,0 +1,13 @@
+% Article figure snippet. Requires graphicx. Plot text is 11 pt at 7.2 in.
+% Set SHOW_PROVENANCE=False in the plotting script to hide its embedded label.
+\newif\ifshowdimantscriptprovenance
+\showdimantscriptprovenancetrue
+\newcommand{\dimantscriptprovenance}[1]{\ifshowdimantscriptprovenance\space Scripts: \texttt{\detokenize{#1}}.\fi}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=7.2in]{figures/dimant_oppenheim/density.pdf}
+\caption{Dimant--Oppenheim electron density, calculated with Eqs.~45--48.
+Distances are in units of $\lambda_T$; the chosen display density is $8\pi n_e/n_*$.
+Positive $z$ points behind the meteor.
+\dimantscriptprovenance{dimant_oppenheim.py; plot_dimant_oppenheim.py}}
+\end{figure}
