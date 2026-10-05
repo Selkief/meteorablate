@@ -1,0 +1,2 @@
+metablate @ git+https://github.com/danielk333/ablate.git
+h5py

@@ -1,83 +1,55 @@
 # Ablation-model paper figures
 
-This repository contains the development version of the code used to generate
-the ablation-model figures for *On the relationship between atmospheric neutral
-density and meteor head echo detection height*.
+Generate all paper figures with current upstream
+[metablate](https://github.com/danielk333/ablate), without a special checkout,
+historical revision, extension flags, or reproduction wrapper.
 
-The implementation uses the `KeroSzasz2008` model from
-[`ablate`](https://github.com/jvierine/ablate) (imported as `metablate`) and the
-MSIS 2.1 atmosphere.
+Install/update dependencies once:
 
-Run the figure generator from the repository root:
-
-    conda run -n base python make_cabmod_figures.py
-
-It writes the following files under `figures/`:
-
-- `meteor_ablation_single_column.pdf`
-- `peak_ablation_height-1.20.pdf`
-- `peak_ablation_height-1.00.pdf`
-- `peak_ablation_height-0.80.pdf`
-- `velocity_shift_table.tex`
-
-Install `ablate` into the active Python environment, or place an `ablate`
-checkout next to this repository so that `../ablate/src` is available.
-
-## Reproduction and extension to 11 km/s
-
-The reproduction runner archives the model inputs, Python sources, dependency
-versions, atmosphere, full trajectories, and table values in HDF5. It preserves
-the paper's equations and peak definition. The extended run adds 11, 15, and
-20 km/s to the original speed families and increases the maximum integration
-duration to 30 seconds to capture the low-speed peaks.
-
-Prepare sibling code checkouts and dependencies:
-
-```bash
-git clone https://github.com/jvierine/sabmod.git
-git clone https://github.com/danielk333/ablate.git
-git -C ablate checkout c2c8b34a5b5986f3f1a59363786e3b162ddde1e5
-cd sabmod
-conda run -n base python -m pip install -e ../ablate
-conda run -n base python -m pip install -r requirements-reproduction.txt
+```sh
+conda run -n base python -m pip install --upgrade -r requirements-figures.txt
 ```
 
-Run the original reproduction or the extended speed family:
+Then run:
 
-```bash
-conda run --no-capture-output -n base python -u reproduce_paper.py
-conda run --no-capture-output -n base python -u reproduce_paper.py --extend-down-to 11 --extra-velocity 15
-conda run --no-capture-output -n base python -u check_paper_numerics.py
+```sh
+conda run -n base python make_cabmod_figures.py
 ```
 
-Use `--extra-velocity` repeatedly to add other speeds and `--output-dir` to
-choose an output directory. If an Overleaf checkout is present under `paper/`,
-the runner uses its generator; otherwise it uses the generator in this repo
-and the saved reference table under `reference/`.
+The default profiles include **11, 15, 20, 32, 53, 72 km/s**, at entry
+elevations 70, 45, and 20 degrees. Density comparisons use 11, 15, 20, 32,
+52, and 72 km/s (the 52/53 distinction matches the reference figures), with
+MSIS density factors **1.2, 1.0, and 0.8**. All runs allow 30 seconds to
+capture low-speed heating peaks.
 
-The original [reproduction record](reproduction/README.md) documents agreement
-with the paper and numerical sensitivity. The
-[extended-run record](reproduction_extended/README.md) documents the wider
-velocity range. Both contain HDF5 outputs and LaTeX captions with script
-provenance enabled by default. The model uses `ablate`; its GPL license is
-included under `licenses/` for the source snapshots embedded in the archives.
+Outputs in `figures/`: four PDFs and PNGs, `velocity_shift_table.tex`, and
+`cabmod_results.h5`. The archive stores all 57 distinct trajectories, generating
+source, and installed dependency provenance. Finite trajectories and interior
+mass-loss peaks are checked. A time-limited track with mass remaining does
+not establish complete ablation or surface delivery.
 
-### Extended profiles
+These are Kero-Szasz/metablate calculations, not multicomponent CABMOD chemistry
+despite the historical script name. Current package equations are used without
+historical-source patches. Small differences from old screenshots are expected.
+The published run used upstream `c31ef4e` (metablate 0.2.0): provenance, not a
+required revision.
 
-![Six-speed ablation profiles](reproduction_extended/figures/meteor_ablation_single_column.png)
+![Six-speed profiles](figures/meteor_ablation_single_column.png)
+![Density increased by 20 percent](figures/peak_ablation_height-1.20.png)
+![Density decreased by 20 percent](figures/peak_ablation_height-0.80.png)
 
-### Density increase by 20 percent
+See [figure notes](README_figures.md) and `figure_captions.tex` for article
+inclusion with script provenance shown by default. Figures use the manuscript's
+177 mm text width and fonts at least 10 pt.
 
-![Density increase](reproduction_extended/figures/peak_ablation_height-1.20.png)
+Fast checks:
 
-### Density decrease by 20 percent
+```sh
+conda run -n base python -m unittest test_make_cabmod_figures.py
+```
 
-![Density decrease](reproduction_extended/figures/peak_ablation_height-0.80.png)
-
-The low-speed runs can retain mass at the end of the calculation. All 57
-extended cases completed successfully and their sampled mass-loss peaks
-occur inside the integration interval. The original-range mean inferred
-density factors reproduce as 1.309 and 0.717, but not every individual
-printed table entry matches exactly. Halving the maximum time step changes
-representative peak heights by up to 0.35 km; the records retain this numerical
-limitation.
+`reproduce_paper.py`, `extended_paper_plots.py`, and `reproduction*` are retained
+as historical records targeting the older package API, not the current workflow.
+The [numerical sensitivity discussion](reproduction_extended/README.md) remains
+relevant: representative peak heights shifted by up to 0.35 km when the
+integration step was halved. Figure generation is not physical validation.

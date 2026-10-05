@@ -1,25 +1,31 @@
+"""Generate all paper figures, including 11 and 15 km/s, with no arguments.
+
+Install current upstream once with:
+python -m pip install -U 'metablate @ git+https://github.com/danielk333/ablate.git'
+Then run: python make_cabmod_figures.py
+No source checkout, historical revision, or reproduction wrapper is required.
+"""
 from __future__ import annotations
 
-import sys
+from functools import lru_cache
+import importlib.metadata
 import warnings
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import xarray as xr
+import h5py
+import metablate
+from metablate.models.kero_szasz_2008 import (
+    KeroSzasz2008, KeroSzaszOptions, KeroSzaszInitialState,
+)
+from spacecoords import frames
 
 ROOT = Path(__file__).resolve().parent
-try:
-    import metablate
-except:
-    # try local install
-    ABLAte_SRC = ROOT.parent / "ablate" / "src"
-    if str(ABLAte_SRC) not in sys.path:
-        sys.path.insert(0, str(ABLAte_SRC))
-    import metablate
-
-
 FIG_DIR = ROOT / "figures"
 DEFAULT_TIME = np.datetime64("2018-06-28T12:45:33", "ns")
 DEFAULT_LAT = 69.30
@@ -28,16 +34,23 @@ DEFAULT_REFERENCE_ALTITUDE_M = 100e3
 DEFAULT_START_ALTITUDE_M = 130e3
 DEFAULT_AZIMUTH_DEG = 0.0
 DEFAULT_MASS_KG = 1e-8
-FIGURE1_VELOCITIES_KM_S = np.array([32.0, 53.0, 72.0], dtype=np.float64)
+FIGURE1_VELOCITIES_KM_S = np.array([11., 15., 20., 32., 53., 72.])
 FIGURE1_ENTRY_ELEVATION_ANGLES_DEG = np.array([70.0, 45.0, 20.0], dtype=np.float64)
 DEFAULT_ENTRY_ELEVATION_ANGLE_DEG = float(FIGURE1_ENTRY_ELEVATION_ANGLES_DEG[1])
 FIGURE1_SHOW_PEAK_ABLATION_LINES = False
-FIGURE2_BASELINE_VELOCITIES_KM_S = np.array([32.0, 52.0, 72.0], dtype=np.float64)
+FIGURE2_BASELINE_VELOCITIES_KM_S = np.array([11., 15., 20., 32., 52., 72.])
 FIGURE2_DENSITY_SCALES = (1.2, 0.8)
 ATMOSPHERE_ALTITUDE_GRID_M = np.linspace(50e3, 150e3, 1001)
 FIGURE1_ENTRY_ELEVATION_COLORS = tuple(plt.rcParams["axes.prop_cycle"].by_key()["color"])
 VELOCITY_SHIFT_TABLE_PATH = FIG_DIR / "velocity_shift_table.tex"
 DEFAULT_MATERIAL="cometary"
+# copernicus.cls: manuscript textwidth=177 mm, article body=10 pt.
+# The 0.99 factor also accommodates the density plots' 0.99\textwidth inclusion.
+FIGURE_WIDTH_IN = .99 * 177 / 25.4
+plt.rcParams.update({"font.size": 10, "axes.labelsize": 10,
+                    "axes.titlesize": 10, "xtick.labelsize": 10,
+                    "ytick.labelsize": 10, "legend.fontsize": 10})
+TRAJECTORIES = {}
 
 class CachedScaledAtmosphere(metablate.atmosphere.Atmosphere):
     def __init__(self, base_atmosphere, density_scale):
@@ -86,73 +99,69 @@ class CachedScaledAtmosphere(metablate.atmosphere.Atmosphere):
         )
 
 
+@lru_cache(maxsize=None)
 def build_kero_model(density_scale=1.0):
     base_atmosphere = metablate.atmosphere.AtmPymsis()
     atmosphere = CachedScaledAtmosphere(base_atmosphere, density_scale)
-    return metablate.KeroSzasz2008(
-        atmosphere=atmosphere,
-        config={
-            "options": {
-                "temperature0": 290,
-                "shape_factor": 1.21,
-                "emissivity": 0.9,
-                "sputtering": False,
-                "Gamma": 1.0,
-                "Lambda": 1.0,
-                "integral_resolution": 40,
-            },
-            "atmosphere": {
-                "version": 2.1,
-            },
-            "integrate": {
-                "minimum_mass_kg": DEFAULT_MASS_KG * 1e-5,
-                "max_step_size_sec": 5e-2,
-                "max_time_sec": 5.0,
-                "method": "RK45",
-            },
-        },
-    )
+    return KeroSzasz2008(KeroSzaszOptions(
+        atmosphere=atmosphere, atmosphere_kwargs={"version": 2.1},
+        effective_atmospheric_temperature=290, shape_factor=1.21,
+        emissivity=.9, sputtering=False, integral_resolution=40,
+        material=metablate.material.get(DEFAULT_MATERIAL, as_dict=False),
+        start_altitude=DEFAULT_START_ALTITUDE_M,
+        minimum_mass=DEFAULT_MASS_KG * 1e-5,
+        max_step_size=.05, max_time=30., method="RK45",
+    ))
 
 
+@lru_cache(maxsize=None)
 def simulate_case(
     velocity_km_s,
     density_scale=1.0,
     entry_elevation_angle_deg=DEFAULT_ENTRY_ELEVATION_ANGLE_DEG,
 ):
     model = build_kero_model(density_scale=density_scale)
-    material_data = metablate.material.get(DEFAULT_MATERIAL)
+    position = frames.geodetic_wgs84_to_ecef(
+        DEFAULT_LAT, DEFAULT_LON, DEFAULT_REFERENCE_ALTITUDE_M, degrees=True)
+    direction = -frames.azel_to_ecef(
+        DEFAULT_LAT, DEFAULT_LON, DEFAULT_AZIMUTH_DEG,
+        entry_elevation_angle_deg, degrees=True)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        result = model.run(
-            velocity0=velocity_km_s * 1e3,
-            mass0=DEFAULT_MASS_KG,
-            altitude0=DEFAULT_START_ALTITUDE_M,
-            # metablate names this argument zenith_ang, but KeroSzasz2008
-            # passes it to azel_to_cart as an elevation angle above horizon.
-            zenith_ang=entry_elevation_angle_deg,
-            azimuth_ang=DEFAULT_AZIMUTH_DEG,
-            material_data=material_data,
-            time=DEFAULT_TIME,
-            lat=DEFAULT_LAT,
-            lon=DEFAULT_LON,
-            alt=DEFAULT_REFERENCE_ALTITUDE_M,
-        )
+        result = model.run(KeroSzaszInitialState(
+            epoch=DEFAULT_TIME, position_ecef=np.asarray(position),
+            velocity_ecef=np.asarray(direction) * velocity_km_s * 1e3,
+            mass=DEFAULT_MASS_KG, drag_coefficient=1., heat_transfer_coefficient=1.,
+        ))
 
-    altitude_km = result.altitude.values * 1e-3
-    velocity_km_s = result.velocity.values * 1e-3
-    mass_loss_rate = np.abs(np.gradient(result.mass.values, result.t, edge_order=1))
+    altitude_km = frames.ecef_to_geodetic_wgs84(*result.position_ecef, degrees=True)[2] * 1e-3
+    initial_velocity = float(velocity_km_s)
+    velocity_km_s = result.velocity * 1e-3
+    mass_loss_rate = np.abs(np.gradient(result.mass, result.t, edge_order=1))
     mass_loss_rate[~np.isfinite(mass_loss_rate)] = np.nan
 
     peak_ind = np.nanargmax(mass_loss_rate)
+    if peak_ind in (0, len(result.t) - 1):
+        raise RuntimeError("Mass-loss peak is at an integration endpoint")
+    if not all(np.all(np.isfinite(v)) for v in
+               (altitude_km, result.velocity, result.mass, result.temperature)):
+        raise RuntimeError("Non-finite trajectory returned by metablate")
+    TRAJECTORIES[(initial_velocity, float(density_scale), float(entry_elevation_angle_deg))] = {
+        "time_s": result.t, "altitude_km": altitude_km, "velocity_km_s": velocity_km_s,
+        "mass_kg": result.mass, "temperature_k": result.temperature,
+        "mass_loss_rate_kg_s": mass_loss_rate,
+    }
+    print(f"v={initial_velocity:.3f} km/s, density={density_scale:g}, "
+          f"elevation={entry_elevation_angle_deg:g}: peak={altitude_km[peak_ind]:.3f} km", flush=True)
     sort_inds = np.argsort(altitude_km)
 
     return {
         "altitude_km": altitude_km[sort_inds],
         "velocity_km_s": velocity_km_s[sort_inds],
         "mass_loss_rate_kg_s": mass_loss_rate[sort_inds],
-        "temperature_k": result.temperature.values[sort_inds],
-        "mass_kg": result.mass.values[sort_inds],
+        "temperature_k": result.temperature[sort_inds],
+        "mass_kg": result.mass[sort_inds],
         "peak_altitude_km": altitude_km[peak_ind],
     }
 
@@ -218,15 +227,14 @@ def make_figure1(show_peak_ablation_lines=FIGURE1_SHOW_PEAK_ABLATION_LINES):
         for ind, angle in enumerate(FIGURE1_ENTRY_ELEVATION_ANGLES_DEG)
     }
     velocity_linestyles = {
-        32.0: "-",
-        53.0: "--",
-        72.0: ":",
+        11.: "-", 15.: "--", 20.: ":", 32.: "-.",
+        53.: (0, (5, 1, 1, 1)), 72.: (0, (3, 1, 1, 1, 1, 1)),
     }
 
     fig, axes = plt.subplots(
         2,
         2,
-        figsize=(7.2, 5.4),
+        figsize=(FIGURE_WIDTH_IN, 5.4),
         sharey=True,
         constrained_layout=True,
     )
@@ -278,7 +286,8 @@ def make_figure1(show_peak_ablation_lines=FIGURE1_SHOW_PEAK_ABLATION_LINES):
         # fallback to previous sensible defaults
         axes[1].set_xlim(1e-7, 1e-6)
     else:
-        axes[1].set_xlim(peak_mass_loss / 100.0, peak_mass_loss*10)
+        # Reserve room for the six-speed legend at the final manuscript width.
+        axes[1].set_xlim(min(all_peaks) / 10.0, peak_mass_loss*60)
     axes[1].set_ylim(70, 130)
 
     for item in results:
@@ -342,9 +351,9 @@ def make_figure1(show_peak_ablation_lines=FIGURE1_SHOW_PEAK_ABLATION_LINES):
         loc="upper left",
         title="Entry elevation",
     )
-    axes[1].legend(handles=velocity_handles, frameon=False, loc="lower right", title="Velocity")
+    axes[1].legend(handles=velocity_handles, frameon=False, loc="lower right", title="Entry speed")
 
-    fig.savefig(FIG_DIR / "meteor_ablation_single_column.pdf")
+    save_figure(fig, "meteor_ablation_single_column")
     plt.close(fig)
 
 
@@ -355,7 +364,7 @@ def make_figure2(gamma):
     fig, axes = plt.subplots(
         1,
         len(entry_elevation_angles),
-        figsize=(3.2 * len(entry_elevation_angles), 3.7),
+        figsize=(FIGURE_WIDTH_IN, 3.7),
         sharey=True,
         constrained_layout=True,
     )
@@ -462,17 +471,18 @@ def make_figure2(gamma):
                 xytext=(0, 7),
                 textcoords="offset points",
                 ha="center",
-                fontsize=9,
+                fontsize=10,
             )
 
         ax.set_title(rf"$\alpha={entry_elevation_angle_deg:.0f}^\circ$")
-        ax.set_xlabel("Geocentric velocity [km s$^{-1}$]")
         ax.grid(True, alpha=0.25)
 
     axes[0].set_ylabel(r"Altitude of peak $|dm/dt|$ [km]")
-    axes[-1].legend(frameon=False, loc="best")
+    axes[len(axes) // 2].set_xlabel("Geocentric velocity [km s$^{-1}$]")
+    handles, labels = axes[-1].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, loc="outside lower center", ncol=2)
 
-    fig.savefig(FIG_DIR / f"peak_ablation_height-{gamma:.2f}.pdf")
+    save_figure(fig, f"peak_ablation_height-{gamma:.2f}")
     plt.close(fig)
     return table_rows
 
@@ -550,14 +560,41 @@ def write_velocity_shift_table(rows):
     VELOCITY_SHIFT_TABLE_PATH.write_text("\n".join(lines))
 
 
+def save_figure(fig, stem):
+    fig.savefig(FIG_DIR / f"{stem}.pdf", metadata={
+        "Creator": "make_cabmod_figures.py", "Subject": f"metablate {metablate.__version__}"})
+    fig.savefig(FIG_DIR / f"{stem}.png", dpi=220)
+
+
+def write_trajectory_archive():
+    with h5py.File(FIG_DIR / "cabmod_results.h5", "w") as archive:
+        archive.attrs["generating_script"] = str(Path(__file__).resolve())
+        archive.attrs["metablate_version"] = metablate.__version__
+        archive.attrs["metablate_installation"] = str(Path(metablate.__file__).resolve())
+        archive.attrs["metablate_direct_url"] = (
+            importlib.metadata.distribution("metablate").read_text("direct_url.json") or "")
+        archive.attrs["angle_convention"] = "entry elevation at 100 km reference point"
+        archive.attrs["max_time_s"] = 30.
+        archive.attrs["max_step_s"] = .05
+        archive.create_dataset("generating_source", data=Path(__file__).read_text())
+        for index, ((speed, density, angle), track) in enumerate(TRAJECTORIES.items()):
+            group = archive.create_group(f"trajectories/{index:03d}")
+            group.attrs.update(initial_speed_km_s=speed, density_scale=density,
+                               entry_elevation_deg=angle)
+            for name, values in track.items():
+                group.create_dataset(name, data=values, compression="gzip")
+
+
 def main():
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Using metablate {metablate.__version__}: {metablate.__file__}", flush=True)
     make_figure1()
     table_rows = []
     table_rows.extend(make_figure2(gamma=1.2))
     make_figure2(gamma=1.0)
     table_rows.extend(make_figure2(gamma=0.8))
     write_velocity_shift_table(table_rows)
+    write_trajectory_archive()
 
     print(f"Saved {FIG_DIR / 'meteor_ablation_single_column.pdf'}")
     for gamma in (1.2, 1.0, 0.8):
